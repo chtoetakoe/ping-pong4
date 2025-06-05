@@ -1,4 +1,4 @@
-type Player = {
+export type Player = {
     id: string;
     paddleY: number;
   };
@@ -18,7 +18,7 @@ type Player = {
   };
   
   export class GameRoom {
-    private players: Player[] = [];
+    public players: Player[] = [];
     private gameState: GameState;
   
     constructor(public roomId: string) {
@@ -28,19 +28,20 @@ type Player = {
           x: 400,
           y: 300,
           vx: 4,
-          vy: 3,
+          vy: 3
         },
         score: {
           left: 0,
-          right: 0,
+          right: 0
         }
       };
     }
   
     addPlayer(socketId: string) {
-      if (this.players.length >= 2) return;
-      this.players.push({ id: socketId, paddleY: 250 });
-      this.gameState.players = this.players;
+      if (this.players.length < 2) {
+        this.players.push({ id: socketId, paddleY: 250 });
+        this.gameState.players = this.players;
+      }
     }
   
     removePlayer(socketId: string) {
@@ -56,24 +57,24 @@ type Player = {
     }
   
     updateGameLogic() {
+      if (this.players.length < 2) return;
+  
       const ball = this.gameState.ball;
       ball.x += ball.vx;
       ball.y += ball.vy;
   
-      // bounce off top/bottom
+      // Bounce off top and bottom
       if (ball.y <= 0 || ball.y >= 600) {
         ball.vy *= -1;
       }
   
-      // check paddle collisions, scoring, etc. (to be expanded later)
-  
-      this.gameState.ball = ball;
+      // Clamp to canvas
+      ball.x = Math.max(0, Math.min(ball.x, 800));
+      ball.y = Math.max(0, Math.min(ball.y, 600));
     }
   
     getState() {
-        console.log("📤 Sending game state:", this.gameState);
-        return this.gameState;
-      }
-      
+      return this.gameState;
+    }
   }
   

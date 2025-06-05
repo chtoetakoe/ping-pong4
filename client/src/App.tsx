@@ -1,21 +1,62 @@
-import { useState } from 'react';
-import { useSocket } from './useSocket';
+import { useEffect, useState } from 'react';
+import { io, Socket } from 'socket.io-client';
 import GameCanvas from './GameCanvas';
 
-function App() {
-  const [gameState, setGameState] = useState<any>(null);
+type Player = {
+  id: string;
+  paddleY: number;
+};
 
-  useSocket((data) => {
-    console.log("📦 Received game state:", data);
-    setGameState(data);
-  });
+type Ball = {
+  x: number;
+  y: number;
+};
+
+type Score = {
+  left: number;
+  right: number;
+};
+
+type GameState = {
+  players: Player[];
+  ball: Ball;
+  score: Score;
+};
+
+const socket: Socket = io('http://localhost:3000');
+
+function App() {
+  const [gameState, setGameState] = useState<GameState | null>(null);
+
+  useEffect(() => {
+    // Join an open room
+    socket.emit('joinRoom');
+
+    // Listen for state updates
+    socket.on('gameState', (state: GameState) => {
+      setGameState(state);
+    });
+
+    // Handle key presses for paddle movement
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowUp') {
+        socket.emit('paddleMove', -10);
+      } else if (e.key === 'ArrowDown') {
+        socket.emit('paddleMove', 10);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      socket.disconnect();
+    };
+  }, []);
 
   return (
-    <div>
-      <h1 style={{ textAlign: 'center', color: 'white' }}>Multiplayer Pong</h1>
-      <pre style={{ background: '#111', color: '#0f0', padding: '1rem' }}>
-        {JSON.stringify(gameState, null, 2)}
-      </pre>
+    <div style={{ textAlign: 'center' }}>
+      <h1 style={{ color: 'white' }}>Multiplayer Pong</h1>
       <GameCanvas gameState={gameState} />
     </div>
   );

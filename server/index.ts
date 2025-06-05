@@ -2,71 +2,118 @@ import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
-import { GameRoom } from './game';
 
 const app = express();
+app.use(cors());
+
 const server = http.createServer(app);
-
-app.use(cors({
-  origin: 'http://localhost:5173',
-  methods: ['GET', 'POST']
-}));
-
 const io = new Server(server, {
-  cors: {
-    origin: 'http://localhost:5173',
-    methods: ['GET', 'POST']
-  }
+  cors: { origin: '*' },
 });
 
-const PORT = 3000;
+type Player = { id: string; paddleY: number };
+type Ball = { x: number; y: number; vx: number; vy: number };
+type Score = { left: number; right: number };
+type GameRoom = { players: Player[]; ball: Ball; score: Score };
 
-// Map of roomId -> GameRoom instance
-const rooms: Record<string, GameRoom> = {};
+const rooms = new Map<string, GameRoom>();
+const FRAME_RATE = 60;
+const PADDLE_HEIGHT = 80;
+const CANVAS_HEIGHT = 600;
 
-io.on('connection', (socket) => {
-  console.log('🎮 Player connected:', socket.id);
+// 🎮 Game loop
+setInterval(() => {
+  for (const [roomId, room] of rooms.entries()) {
+    const { ball, players, score } = room;
 
-  // Try to find a room with only 1 player
-  let room = Object.values(rooms).find(r => r.getState().players.length < 2);
+    // Ball movement
+    ball.x += ball.vx;
+    ball.y += ball.vy;
 
-  // If none found, create new room
-  if (!room) {
-    room = new GameRoom(`room-${socket.id}`);
-    rooms[room.roomId] = room;
+    // Wall bounce
+    if (ball.y <= 0 || ball.y >= CANVAS_HEIGHT) ball.vy *= -1;
+
+    // Paddle bounce
+    if (players[0] && ball.x <= 30 && ball.y >= players[0].paddleY && ball.y <= players[0].paddleY + PADDLE_HEIGHT)
+      ball.vx *= -1;
+
+    if (players[1] && ball.x >= 770 && ball.y >= players[1].paddleY && ball.y <= players[1].paddleY + PADDLE_HEIGHT)
+      ball.vx *= -1;
+
+    // Score
+    if (ball.x < 0) {
+      score.right++;
+      ball.x = 400;
+      ball.y = 300;
+    } else if (ball.x > 800) {
+      score.left++;
+      ball.x = 400;
+      ball.y = 300;
+    }
+
+    // Broadcast state
+    io.to(roomId).emit('gameState', {
+      players,
+      ball: { x: ball.x, y: ball.y },
+      score,
+    });
   }
+}, 1000 / FRAME_RATE);
 
-  // Add player and join room
-  room.addPlayer(socket.id);
-  socket.join(room.roomId);
-  console.log(`👥 Player ${socket.id} joined ${room.roomId}`);
+// 🔌 Client connection
+io.on('connection', (socket) => {
+  console.log('Player connected:', socket.id);
 
-  // Paddle movement from client
-  socket.on('paddleMove', (newY: number) => {
-    room?.updatePaddle(socket.id, newY);
+  socket.on('joinRoom', () => {
+    let assignedRoom = null;
+
+    // Find room with 1 player
+    for (const [roomId, room] of rooms.entries()) {
+      if (room.players.length === 1) {
+        assignedRoom = roomId;
+        room.players.push({ id: socket.id, paddleY: 250 });
+        socket.join(roomId);
+        console.log(`Player ${socket.id} joined existing room: ${roomId}`);
+        break;
+      }
+    }
+
+    // If no available room, create new
+    if (!assignedRoom) {
+      const newRoomId = `room-${socket.id}`;
+      const newRoom: GameRoom = {
+        players: [{ id: socket.id, paddleY: 250 }],
+        ball: { x: 400, y: 300, vx: 4, vy: 3 },
+        score: { left: 0, right: 0 },
+      };
+      rooms.set(newRoomId, newRoom);
+      socket.join(newRoomId);
+      console.log(`Player ${socket.id} created new room: ${newRoomId}`);
+    }
   });
 
-  // Handle disconnect
-  socket.on('disconnect', () => {
-    room?.removePlayer(socket.id);
-    console.log('🚪 Player disconnected:', socket.id);
+  socket.on('paddleMove', (deltaY: number) => {
+    for (const room of rooms.values()) {
+      const player = room.players.find((p) => p.id === socket.id);
+      if (player) {
+        player.paddleY = Math.max(0, Math.min(CANVAS_HEIGHT - PADDLE_HEIGHT, player.paddleY + deltaY));
+        break;
+      }
+    }
+  });
 
-    // Clean up room if empty
-    if (room && room.getState().players.length === 0) {
-      delete rooms[room.roomId];
-      console.log(`🧹 Deleted empty room ${room.roomId}`);
+  socket.on('disconnect', () => {
+    console.log('Player disconnected:', socket.id);
+    for (const [roomId, room] of rooms.entries()) {
+      room.players = room.players.filter((p) => p.id !== socket.id);
+      if (room.players.length === 0) {
+        rooms.delete(roomId);
+        console.log(`Room ${roomId} deleted due to no players`);
+      }
     }
   });
 });
 
-// Broadcast game state to all players 60 times per second
-setInterval(() => {
-  for (const room of Object.values(rooms)) {
-    room.updateGameLogic();
-    io.to(room.roomId).emit('gameState', room.getState());
-  }
-}, 1000 / 60);
-
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+server.listen(3000, () => {
+  console.log('✅ Server running on http://localhost:3000');
 });
