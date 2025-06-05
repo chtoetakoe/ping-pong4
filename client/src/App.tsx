@@ -2,26 +2,10 @@ import { useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import GameCanvas from './GameCanvas';
 
-type Player = {
-  id: string;
-  paddleY: number;
-};
-
-type Ball = {
-  x: number;
-  y: number;
-};
-
-type Score = {
-  left: number;
-  right: number;
-};
-
-type GameState = {
-  players: Player[];
-  ball: Ball;
-  score: Score;
-};
+type Player = { id: string; paddleY: number };
+type Ball   = { x: number; y: number };
+type Score  = { left: number; right: number };
+type GameState = { players: Player[]; ball: Ball; score: Score };
 
 const socket: Socket = io('http://localhost:3000');
 
@@ -29,28 +13,29 @@ function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
 
   useEffect(() => {
-    // Join an open room
-    socket.emit('joinRoom');
+    /* ✅ wait until the socket is connected */
+    socket.on('connect', () => {
+      console.log('🔗 connected, joining room …');
+      socket.emit('joinRoom');
+    });
 
-    // Listen for state updates
+    /* state updates */
     socket.on('gameState', (state: GameState) => {
+      console.log('📦 state', state);          // you should now see these logs
       setGameState(state);
     });
 
-    // Handle key presses for paddle movement
+    /* paddle controls */
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowUp') {
-        socket.emit('paddleMove', -10);
-      } else if (e.key === 'ArrowDown') {
-        socket.emit('paddleMove', 10);
-      }
+      if (e.key === 'ArrowUp'   || e.key === 'w') socket.emit('paddleMove', -10);
+      if (e.key === 'ArrowDown' || e.key === 's') socket.emit('paddleMove',  10);
     };
-
     window.addEventListener('keydown', handleKeyDown);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      socket.disconnect();
+      socket.off('connect');
+      socket.off('gameState');
     };
   }, []);
 
