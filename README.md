@@ -77,11 +77,3 @@ Hold the key for smooth, fast motion.
 
 ---
 
-## 📝 Todo / Nice‑to‑have
-
-* [ ] Mobile touch controls
-* [ ] Paddle spin (angle change on hit)
-* [ ] Spectator slots / lobby UI
-* [ ] Unit tests for collision math
-
-> PRs welcome – fork, branch, and open a pull‑request! ✨
