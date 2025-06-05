@@ -1,0 +1,17 @@
+# Node.js (server/)
+server/node_modules/
+server/dist/
+server/.env
+
+# React (client/)
+client/node_modules/
+client/dist/
+client/.env
+
+# OS/System files
+.DS_Store
+Thumbs.db
+
+# IDE configs
+.vscode/
+*.log
