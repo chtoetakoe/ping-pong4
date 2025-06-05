@@ -1,18 +1,15 @@
 import { useState } from 'react';
 import { useSocket } from './useSocket';
+import GameCanvas from './GameCanvas';
 
 function App() {
   const [gameState, setGameState] = useState<any>(null);
-
-  // Establish socket connection and listen for game state
-  useSocket((data) => {
-    setGameState(data);
-  });
+  useSocket(setGameState);
 
   return (
     <div>
-      <h1>Multiplayer Pong</h1>
-      <pre>{JSON.stringify(gameState, null, 2)}</pre>
+      <h1 style={{ textAlign: 'center' }}>Multiplayer Pong</h1>
+      <GameCanvas gameState={gameState} />
     </div>
   );
 }
