@@ -5,115 +5,97 @@ import cors from 'cors';
 
 const app = express();
 app.use(cors());
-
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: '*' },
+const io = new Server(server, { cors: { origin: '*' } });
+
+/* ─ types ─ */
+type Player = { id: string; paddleY: number; side: 'left' | 'right' };
+type Ball   = { x: number; y: number; vx: number; vy: number };
+type Score  = { left: number; right: number };
+type GameRoom = { id: string; players: Player[]; ball: Ball; score: Score };
+
+/* ─ helpers ─ */
+const randomVel = (): { vx: number; vy: number } => ({
+  vx: Math.random() < 0.5 ? 4 : -4,
+  vy: (Math.random() * 4 + 2) * (Math.random() < 0.5 ? 1 : -1),
 });
 
-type Player = { id: string; paddleY: number };
-type Ball = { x: number; y: number; vx: number; vy: number };
-type Score = { left: number; right: number };
-type GameRoom = { players: Player[]; ball: Ball; score: Score };
+/* ─ constants ─ */
+const FRAME = 1000 / 60;
+const H = 600, W = 800, PADDLE = 80;
 
-const rooms = new Map<string, GameRoom>();
-const FRAME_RATE = 60;
-const PADDLE_HEIGHT = 80;
-const CANVAS_HEIGHT = 600;
+/* ─ state ─ */
+let waitingSocket: string | null = null;      // holds 1st player waiting
+const rooms = new Map<string, GameRoom>();    // roomId → room
 
-// 🎮 Game loop
+/* ─ game loop ─ */
 setInterval(() => {
-  for (const [roomId, room] of rooms.entries()) {
+  for (const room of rooms.values()) {
     const { ball, players, score } = room;
 
-    // Ball movement
     ball.x += ball.vx;
     ball.y += ball.vy;
 
-    // Wall bounce
-    if (ball.y <= 0 || ball.y >= CANVAS_HEIGHT) ball.vy *= -1;
+    if (ball.y <= 0 || ball.y >= H) ball.vy *= -1;
 
-    // Paddle bounce
-    if (players[0] && ball.x <= 30 && ball.y >= players[0].paddleY && ball.y <= players[0].paddleY + PADDLE_HEIGHT)
-      ball.vx *= -1;
+    const L = players.find(p => p.side === 'left');
+    const R = players.find(p => p.side === 'right');
 
-    if (players[1] && ball.x >= 770 && ball.y >= players[1].paddleY && ball.y <= players[1].paddleY + PADDLE_HEIGHT)
-      ball.vx *= -1;
+    if (L && ball.x <= 30 && ball.y >= L.paddleY && ball.y <= L.paddleY + PADDLE) ball.vx *= -1;
+    if (R && ball.x >= W - 30 && ball.y >= R.paddleY && ball.y <= R.paddleY + PADDLE) ball.vx *= -1;
 
-    // Score
-    if (ball.x < 0) {
-      score.right++;
-      ball.x = 400;
-      ball.y = 300;
-    } else if (ball.x > 800) {
-      score.left++;
-      ball.x = 400;
-      ball.y = 300;
-    }
+    if (ball.x < 0)  { score.right++; Object.assign(ball, { x: W/2, y: H/2, ...randomVel() }); }
+    if (ball.x > W)  { score.left++;  Object.assign(ball, { x: W/2, y: H/2, ...randomVel() }); }
 
-    // Broadcast state
-    io.to(roomId).emit('gameState', {
-      players,
-      ball: { x: ball.x, y: ball.y },
-      score,
-    });
+    io.to(room.id).emit('gameState', { players, ball: { x: ball.x, y: ball.y }, score });
   }
-}, 1000 / FRAME_RATE);
+}, FRAME);
 
-// 🔌 Client connection
+/* ─ socket handling ─ */
 io.on('connection', (socket) => {
-  console.log('Player connected:', socket.id);
+  console.log('connect', socket.id);
 
-  socket.on('joinRoom', () => {
-    let assignedRoom = null;
+  /* pairing */
+  if (waitingSocket === null) {
+    waitingSocket = socket.id;               // first player waits
+    socket.join(socket.id);                  // roomId == socket.id
+    rooms.set(socket.id, {
+      id: socket.id,
+      players: [{ id: socket.id, paddleY: 250, side: 'left' }],
+      ball: { x: W/2, y: H/2, ...randomVel() },
+      score: { left: 0, right: 0 },
+    });
+    console.log('waiting for opponent…');
+  } else {
+    const roomId = waitingSocket;
+    waitingSocket = null;
+    const room = rooms.get(roomId)!;
+    room.players.push({ id: socket.id, paddleY: 250, side: 'right' });
+    socket.join(roomId);
+    console.log(`room ${roomId} ready with two players`);
+  }
 
-    // Find room with 1 player
-    for (const [roomId, room] of rooms.entries()) {
-      if (room.players.length === 1) {
-        assignedRoom = roomId;
-        room.players.push({ id: socket.id, paddleY: 250 });
-        socket.join(roomId);
-        console.log(`Player ${socket.id} joined existing room: ${roomId}`);
-        break;
-      }
-    }
-
-    // If no available room, create new
-    if (!assignedRoom) {
-      const newRoomId = `room-${socket.id}`;
-      const newRoom: GameRoom = {
-        players: [{ id: socket.id, paddleY: 250 }],
-        ball: { x: 400, y: 300, vx: 4, vy: 3 },
-        score: { left: 0, right: 0 },
-      };
-      rooms.set(newRoomId, newRoom);
-      socket.join(newRoomId);
-      console.log(`Player ${socket.id} created new room: ${newRoomId}`);
-    }
-  });
-
-  socket.on('paddleMove', (deltaY: number) => {
+  /* paddle movement */
+  socket.on('paddleMove', (dy: number) => {
     for (const room of rooms.values()) {
-      const player = room.players.find((p) => p.id === socket.id);
-      if (player) {
-        player.paddleY = Math.max(0, Math.min(CANVAS_HEIGHT - PADDLE_HEIGHT, player.paddleY + deltaY));
+      const p = room.players.find(pl => pl.id === socket.id);
+      if (p) {
+        p.paddleY = Math.max(0, Math.min(H - PADDLE, p.paddleY + dy));
         break;
       }
     }
   });
 
+  /* disconnect */
   socket.on('disconnect', () => {
-    console.log('Player disconnected:', socket.id);
-    for (const [roomId, room] of rooms.entries()) {
-      room.players = room.players.filter((p) => p.id !== socket.id);
-      if (room.players.length === 0) {
-        rooms.delete(roomId);
-        console.log(`Room ${roomId} deleted due to no players`);
-      }
+    console.log('disconnect', socket.id);
+    if (waitingSocket === socket.id) waitingSocket = null;
+
+    for (const [id, room] of rooms.entries()) {
+      room.players = room.players.filter(p => p.id !== socket.id);
+      if (room.players.length === 0) rooms.delete(id);
     }
   });
 });
 
-server.listen(3000, () => {
-  console.log('✅ Server running on http://localhost:3000');
-});
+server.listen(3000, () => console.log('✅ server on :3000'));

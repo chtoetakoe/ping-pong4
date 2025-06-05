@@ -2,47 +2,64 @@ import { useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import GameCanvas from './GameCanvas';
 
-type Player = { id: string; paddleY: number };
-type Ball   = { x: number; y: number };
-type Score  = { left: number; right: number };
+/* types with side */
+type Player    = { id: string; paddleY: number; side: 'left' | 'right' };
+type Ball      = { x: number; y: number };
+type Score     = { left: number; right: number };
 type GameState = { players: Player[]; ball: Ball; score: Score };
 
 const socket: Socket = io('http://localhost:3000');
 
 function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
+  const [mySide, setMySide]       = useState<'left' | 'right' | null>(null);
 
   useEffect(() => {
-    /* ✅ wait until the socket is connected */
-    socket.on('connect', () => {
-      console.log('🔗 connected, joining room …');
-      socket.emit('joinRoom');
-    });
-
-    /* state updates */
+    /* gameState listener */
     socket.on('gameState', (state: GameState) => {
-      console.log('📦 state', state);          // you should now see these logs
       setGameState(state);
+      const me = state.players.find(p => p.id === socket.id);
+      if (me) setMySide(me.side);
     });
 
-    /* paddle controls */
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowUp'   || e.key === 'w') socket.emit('paddleMove', -10);
-      if (e.key === 'ArrowDown' || e.key === 's') socket.emit('paddleMove',  10);
+    /* controls (only move own paddle) */
+    const STEP = 12;
+    const keys = { up: false, down: false };
+
+    const down = (e: KeyboardEvent) => {
+      if (['ArrowUp','w'].includes(e.key))   { e.preventDefault(); keys.up   = true; }
+      if (['ArrowDown','s'].includes(e.key)) { e.preventDefault(); keys.down = true; }
     };
-    window.addEventListener('keydown', handleKeyDown);
+    const up = (e: KeyboardEvent) => {
+      if (['ArrowUp','w'].includes(e.key))   keys.up   = false;
+      if (['ArrowDown','s'].includes(e.key)) keys.down = false;
+    };
+    window.addEventListener('keydown', down, true);
+    window.addEventListener('keyup',   up,   true);
+
+    let raf: number;
+    const loop = () => {
+      if (mySide) {                      // only after we know our side
+        if (keys.up)   socket.emit('paddleMove', -STEP);
+        if (keys.down) socket.emit('paddleMove',  STEP);
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    loop();
 
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      socket.off('connect');
+      window.removeEventListener('keydown', down, true);
+      window.removeEventListener('keyup',   up,   true);
+      cancelAnimationFrame(raf);
       socket.off('gameState');
     };
-  }, []);
+  }, [mySide]);
 
   return (
     <div style={{ textAlign: 'center' }}>
       <h1 style={{ color: 'white' }}>Multiplayer Pong</h1>
-      <GameCanvas gameState={gameState} />
+      {gameState && <GameCanvas gameState={gameState} />}
+      {mySide && <p style={{ color: 'white' }}>You are playing on the <b>{mySide}</b></p>}
     </div>
   );
 }
