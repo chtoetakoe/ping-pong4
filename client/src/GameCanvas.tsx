@@ -32,9 +32,9 @@ const GameCanvas = ({ gameState }: Props) => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
 
-    if (!canvas || !ctx || !gameState || !gameState.ball || !Array.isArray(gameState.players)) {
-      return;
-    }
+    if (!canvas || !ctx || !gameState || !gameState.ball) return;   
+      
+    
 
     let animationFrameId: number;
 
